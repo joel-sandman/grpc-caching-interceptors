@@ -1,6 +1,6 @@
-module github.com/llarsson/grpc-caching-interceptors
+module github.com/joel-sandman/grpc-caching-interceptors
 
-go 1.13
+go 1.16
 
 require (
 	github.com/golang/protobuf v1.3.2
