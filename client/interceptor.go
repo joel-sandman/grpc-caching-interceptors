@@ -6,17 +6,19 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strconv"
-	"strings"
+	"os"
+	"regexp"
+	// "strconv"
+	// "strings"
 	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/hashicorp/terraform/helper/hashcode"
 	"github.com/patrickmn/go-cache"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/status"
+	// "google.golang.org/grpc/codes"
+	// "google.golang.org/grpc/metadata"
+	// "google.golang.org/grpc/status"
 )
 
 // A CachingInterceptor intercepts incoming calls to a reverse proxy's server
@@ -41,28 +43,90 @@ type InmemoryCachingInterceptor struct {
 // response is already in cache, and if so, it just responds with it. If
 // no such response is found, the call is allowed to continue as usual,
 // via a client call (which should be intercepted also).
-func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *log.Logger) grpc.UnaryServerInterceptor {
-	csvLog.Printf("timestamp,source,method\n")
+func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *log.Logger, expiration int) grpc.UnaryServerInterceptor {
+	csvLog.Printf("timestamp,source,freshness,method\n")
 
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		// reqMessage := req.(proto.Message)
+		// requestHash := hashcode.String(reqMessage.String())
+		// hash := hashcode.Strings([]string{info.FullMethod, reqMessage.String()})
+
+		// if value, found := interceptor.Cache.Get(hash); found {
+		// 	grpc.SendHeader(ctx, metadata.Pairs("x-cache", "hit"))
+		// 	log.Printf("Using cached response for call to %s(%d)", info.FullMethod, requestHash)
+		// 	csvLog.Printf("%d,cache,%s\n", time.Now().UnixNano(), info.FullMethod)
+		// 	return value, nil
+		// }
+
+		// resp, err := handler(ctx, req)
+		// if err != nil {
+		// 	log.Printf("Failed to call upstream %s(%d): %v", info.FullMethod, requestHash, err)
+		// 	return nil, err
+		// }
+
+		// csvLog.Printf("%d,downstream,%s(%d)\n", time.Now().UnixNano(), info.FullMethod, requestHash)
+
+
+
+		/* ------------------------- NEW CODE ------------------------- */
+
 		reqMessage := req.(proto.Message)
 		requestHash := hashcode.String(reqMessage.String())
 		hash := hashcode.Strings([]string{info.FullMethod, reqMessage.String()})
+		var resp interface{}
+		cacheStatus := "response not cached"
+
+		// resp, err := handler(ctx, req)
+		// if err != nil {
+		// 	log.Printf("Failed to call upstream %s(%d): %v", info.FullMethod, requestHash, err)
+		// 	return nil, err
+		// }
 
 		if value, found := interceptor.Cache.Get(hash); found {
-			grpc.SendHeader(ctx, metadata.Pairs("x-cache", "hit"))
+			// grpc.SetHeader(ctx, metadata.Pairs("x-cache", "hit"))
+
+			retResp, err := handler(ctx, req)
+			if err != nil {
+				log.Printf("Failed to call upstream %s(%d): %v", info.FullMethod, requestHash, err)
+				return nil, err
+			}
+
+			retstr := fmt.Sprintf("%v", retResp)
+			valstr := fmt.Sprintf("%v", value)
+
+			match := false
+			if retstr == valstr {
+				match = true
+				log.Printf("Fresh data in cache")
+			} else {
+				log.Printf("Stale data in cache")
+			}
 			log.Printf("Using cached response for call to %s(%d)", info.FullMethod, requestHash)
-			csvLog.Printf("%d,cache,%s\n", time.Now().UnixNano(), info.FullMethod)
-			return value, nil
+			csvLog.Printf("%d,cache,%t,%s(%d)\n", time.Now().UnixNano(), match, info.FullMethod, requestHash)
+			resp = value
+		} else {
+
+			retResp, err := handler(ctx, req)
+			if err != nil {
+				log.Printf("Failed to call upstream %s(%d): %v", info.FullMethod, requestHash, err)
+				return nil, err
+			}
+
+			// expiration := 10
+			
+			if blacklisted(info.FullMethod) {
+				log.Printf("%s method is blacklisted", info.FullMethod)
+			} else {
+				interceptor.Cache.Set(hash, retResp, time.Duration(expiration)*time.Millisecond)
+				cacheStatus = fmt.Sprintf("response stored for %d ms", expiration)
+			}
+			csvLog.Printf("%d,downstream,,%s(%d)\n", time.Now().UnixNano(), info.FullMethod, requestHash)
+			resp = retResp
 		}
 
-		resp, err := handler(ctx, req)
-		if err != nil {
-			log.Printf("Failed to call upstream %s(%d): %v", info.FullMethod, requestHash, err)
-			return nil, err
-		}
+		log.Printf("Fetched downstream response for call to %s(%d) (%s)", info.FullMethod, requestHash, cacheStatus)
 
-		csvLog.Printf("%d,upstream,%s(%d)\n", time.Now().UnixNano(), info.FullMethod, requestHash)
+		/* ------------------------------------------------------------ */
 
 		return resp, nil
 	}
@@ -74,42 +138,57 @@ func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *lo
 // Subsequent matching operation invocations via the reverse proxy that uses
 // these Interceptors will therefore be served from cache.
 func (interceptor *InmemoryCachingInterceptor) UnaryClientInterceptor() grpc.UnaryClientInterceptor {
-	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-		reqMessage := req.(proto.Message)
-		requestHash := hashcode.String(reqMessage.String())
-		hash := hashcode.Strings([]string{method, reqMessage.String()})
+// 	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+// 		reqMessage := req.(proto.Message)
+// 		requestHash := hashcode.String(reqMessage.String())
+// 		hash := hashcode.Strings([]string{method, reqMessage.String()})
 
-		var header metadata.MD
-		opts = append(opts, grpc.Header(&header))
-		err := invoker(ctx, method, req, reply, cc, opts...)
-		if err != nil {
-			log.Printf("Error calling upstream: %v", err)
-			return err
-		}
+// 		var header metadata.MD
+// 		opts = append(opts, grpc.Header(&header))
+// 		err := invoker(ctx, method, req, reply, cc, opts...)
+// 		if err != nil {
+// 			log.Printf("Error calling upstream: %v", err)
+// 			return err
+// 		}
 
-		cacheStatus := "response not stored"
+// 		cacheStatus := "response not stored"
 
-		expiration, _ := cacheExpiration(header.Get("cache-control"))
-		if expiration > 0 {
-			interceptor.Cache.Set(hash, reply, time.Duration(expiration)*time.Second)
-			cacheStatus = fmt.Sprintf("response stored %d seconds", expiration)
-		}
+// 		expiration, _ := cacheExpiration(header.Get("cache-control"))
+// 		if expiration > 0 {
+// 			interceptor.Cache.Set(hash, reply, time.Duration(expiration)*time.Second)
+// 			cacheStatus = fmt.Sprintf("response stored %d seconds", expiration)
+// 		}
 
-		grpc.SendHeader(ctx, metadata.Pairs("x-cache", "miss"))
-		log.Printf("Fetched upstream response for call to %s(%d) (%s)", method, requestHash, cacheStatus)
-		return nil
-	}
+// 		grpc.SendHeader(ctx, metadata.Pairs("x-cache", "miss"))
+// 		log.Printf("Fetched upstream response for call to %s(%d) (%s)", method, requestHash, cacheStatus)
+// 		return nil
+// 	}
+	return nil
 }
 
-func cacheExpiration(cacheHeaders []string) (int, error) {
-	for _, header := range cacheHeaders {
-		for _, value := range strings.Split(header, ",") {
-			value = strings.Trim(value, " ")
-			if strings.HasPrefix(value, "max-age") {
-				duration := strings.Split(value, "max-age=")[1]
-				return strconv.Atoi(duration)
-			}
+// func cacheExpiration(cacheHeaders []string) (int, error) {
+// 	for _, header := range cacheHeaders {
+// 		for _, value := range strings.Split(header, ",") {
+// 			value = strings.Trim(value, " ")
+// 			if strings.HasPrefix(value, "max-age") {
+// 				duration := strings.Split(value, "max-age=")[1]
+// 				return strconv.Atoi(duration)
+// 			}
+// 		}
+// 	}
+// 	return -1, status.Errorf(codes.Internal, "No cache expiration set for the given object")
+// }
+
+/* ------------------------- NEW CODE ------------------------- */
+
+func blacklisted(method string) bool {
+	if blacklistExpression, found := os.LookupEnv("PROXY_CACHE_BLACKLIST"); found {
+		blacklisted, err := regexp.Match(blacklistExpression, []byte(method))
+		if err == nil && blacklisted {
+			return true
 		}
 	}
-	return -1, status.Errorf(codes.Internal, "No cache expiration set for the given object")
+	return false
 }
+
+/* ------------------------------------------------------------ */
