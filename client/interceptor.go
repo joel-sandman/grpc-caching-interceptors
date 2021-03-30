@@ -44,6 +44,7 @@ type InmemoryCachingInterceptor struct {
 // no such response is found, the call is allowed to continue as usual,
 // via a client call (which should be intercepted also).
 func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *log.Logger, expiration int) grpc.UnaryServerInterceptor {
+	// go interceptor.MemoryUsageStatus()
 	csvLog.Printf("timestamp,source,freshness,method(hash)\n")
 
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
@@ -181,7 +182,7 @@ func (interceptor *InmemoryCachingInterceptor) UnaryClientInterceptor() grpc.Una
 
 /* ------------------------- NEW CODE ------------------------- */
 
-func (interceptor *InmemoryCachingInterceptor) memoryUsageStatus() {
+func (interceptor *InmemoryCachingInterceptor) MemoryUsageStatus() {
 	for {
 		time.Sleep(15 * time.Second)
 		items := interceptor.Cache.ItemCount()
