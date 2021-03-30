@@ -44,7 +44,7 @@ type InmemoryCachingInterceptor struct {
 // no such response is found, the call is allowed to continue as usual,
 // via a client call (which should be intercepted also).
 func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *log.Logger, expiration int) grpc.UnaryServerInterceptor {
-	csvLog.Printf("timestamp,source,freshness,method\n")
+	csvLog.Printf("timestamp,source,freshness,method(hash)\n")
 
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		// reqMessage := req.(proto.Message)
@@ -180,6 +180,14 @@ func (interceptor *InmemoryCachingInterceptor) UnaryClientInterceptor() grpc.Una
 // }
 
 /* ------------------------- NEW CODE ------------------------- */
+
+func (interceptor *InmemoryCachingInterceptor) MemoryUsageStatus() {
+	for {
+		time.Sleep(15 * time.Second)
+		items := interceptor.cache.ItemCount()
+		log.Printf("Items in cache: %d", items)
+	}
+}
 
 func blacklisted(method string) bool {
 	if blacklistExpression, found := os.LookupEnv("PROXY_CACHE_BLACKLIST"); found {
