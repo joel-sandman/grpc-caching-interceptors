@@ -181,10 +181,10 @@ func (interceptor *InmemoryCachingInterceptor) UnaryClientInterceptor() grpc.Una
 
 /* ------------------------- NEW CODE ------------------------- */
 
-func (interceptor *InmemoryCachingInterceptor) MemoryUsageStatus() {
+func (interceptor *InmemoryCachingInterceptor) memoryUsageStatus() {
 	for {
 		time.Sleep(15 * time.Second)
-		items := interceptor.cache.ItemCount()
+		items := interceptor.Cache.ItemCount()
 		log.Printf("Items in cache: %d", items)
 	}
 }
