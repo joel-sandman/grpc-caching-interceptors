@@ -3,6 +3,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -44,8 +45,7 @@ type InmemoryCachingInterceptor struct {
 // no such response is found, the call is allowed to continue as usual,
 // via a client call (which should be intercepted also).
 func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *log.Logger, expiration int) grpc.UnaryServerInterceptor {
-	// go interceptor.MemoryUsageStatus()
-	csvLog.Printf("timestamp,source,freshness,method(hash)\n")
+	csvLog.Printf("timestamp,source,info,method(hash)\n")
 
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		// reqMessage := req.(proto.Message)
@@ -77,15 +77,7 @@ func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *lo
 		var resp interface{}
 		cacheStatus := "response not cached"
 
-		// resp, err := handler(ctx, req)
-		// if err != nil {
-		// 	log.Printf("Failed to call upstream %s(%d): %v", info.FullMethod, requestHash, err)
-		// 	return nil, err
-		// }
-
 		if value, found := interceptor.Cache.Get(hash); found {
-			// grpc.SetHeader(ctx, metadata.Pairs("x-cache", "hit"))
-
 			retResp, err := handler(ctx, req)
 			if err != nil {
 				log.Printf("Failed to call upstream %s(%d): %v", info.FullMethod, requestHash, err)
@@ -95,15 +87,15 @@ func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *lo
 			retstr := fmt.Sprintf("%v", retResp)
 			valstr := fmt.Sprintf("%v", value)
 
-			match := false
+			match := "stale"
 			if retstr == valstr {
-				match = true
+				match = "fresh"
 				log.Printf("Fresh data in cache")
 			} else {
 				log.Printf("Stale data in cache")
 			}
 			log.Printf("Using cached response for call to %s(%d)", info.FullMethod, requestHash)
-			csvLog.Printf("%d,cache,%t,%s(%d)\n", time.Now().UnixNano(), match, info.FullMethod, requestHash)
+			csvLog.Printf("%d,cache,%s,%s(%d)\n", time.Now().UnixNano(), match, info.FullMethod, requestHash)
 			resp = value
 		} else {
 
@@ -112,16 +104,16 @@ func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *lo
 				log.Printf("Failed to call upstream %s(%d): %v", info.FullMethod, requestHash, err)
 				return nil, err
 			}
-
-			// expiration := 10
 			
 			if blacklisted(info.FullMethod) {
 				log.Printf("%s method is blacklisted", info.FullMethod)
+				csvLog.Printf("%d,downstream,blacklisted,%s(%d)\n", time.Now().UnixNano(), info.FullMethod, requestHash)
 			} else {
 				interceptor.Cache.Set(hash, retResp, time.Duration(expiration)*time.Millisecond)
 				cacheStatus = fmt.Sprintf("response stored for %d ms", expiration)
+				csvLog.Printf("%d,downstream,,%s(%d)\n", time.Now().UnixNano(), info.FullMethod, requestHash)
 			}
-			csvLog.Printf("%d,downstream,,%s(%d)\n", time.Now().UnixNano(), info.FullMethod, requestHash)
+			// csvLog.Printf("%d,downstream,,%s(%d)\n", time.Now().UnixNano(), info.FullMethod, requestHash)
 			resp = retResp
 		}
 
@@ -182,11 +174,23 @@ func (interceptor *InmemoryCachingInterceptor) UnaryClientInterceptor() grpc.Una
 
 /* ------------------------- NEW CODE ------------------------- */
 
-func (interceptor *InmemoryCachingInterceptor) MemoryUsageStatus() {
+func (interceptor *InmemoryCachingInterceptor) MemoryUsageStatus(csvLog *log.Logger) {
+	csvLog.Printf("timestamp,items,bytes")
 	for {
 		time.Sleep(15 * time.Second)
+		interceptor.Cache.DeleteExpired()
 		items := interceptor.Cache.ItemCount()
 		log.Printf("Items in cache: %d", items)
+
+		var buf bytes.Buffer
+		err := interceptor.Cache.Save(&buf)
+		if err != nil {
+			log.Printf("Failed save cache to buffer")
+		}
+		size := buf.Len()
+		log.Printf("Size of cache (bytes): %d", size)
+
+		csvLog.Printf("%d,%d,%d", time.Now().UnixNano(), items, size)
 	}
 }
 
