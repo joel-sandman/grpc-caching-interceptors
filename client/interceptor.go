@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"regexp"
 	// "strconv"
 	// "strings"
@@ -44,7 +43,7 @@ type InmemoryCachingInterceptor struct {
 // response is already in cache, and if so, it just responds with it. If
 // no such response is found, the call is allowed to continue as usual,
 // via a client call (which should be intercepted also).
-func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *log.Logger, expiration int) grpc.UnaryServerInterceptor {
+func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *log.Logger, expiration int, blacklistedExpressions string) grpc.UnaryServerInterceptor {
 	csvLog.Printf("timestamp,source,info,method(hash)\n")
 
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
@@ -105,7 +104,7 @@ func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *lo
 				return nil, err
 			}
 			
-			if blacklisted(info.FullMethod) {
+			if blacklisted(blacklistedExpressions, info.FullMethod) {
 				log.Printf("%s method is blacklisted", info.FullMethod)
 				csvLog.Printf("%d,downstream,blacklisted,%s(%d)\n", time.Now().UnixNano(), info.FullMethod, requestHash)
 			} else {
@@ -194,12 +193,10 @@ func (interceptor *InmemoryCachingInterceptor) MemoryUsageStatus(csvLog *log.Log
 	}
 }
 
-func blacklisted(method string) bool {
-	if blacklistExpression, found := os.LookupEnv("PROXY_CACHE_BLACKLIST"); found {
-		blacklisted, err := regexp.Match(blacklistExpression, []byte(method))
-		if err == nil && blacklisted {
-			return true
-		}
+func blacklisted(blacklistedExpressions, method string) bool {
+	blacklisted, err := regexp.Match(blacklistedExpressions, []byte(method))
+	if err == nil && blacklisted {
+		return true
 	}
 	return false
 }
