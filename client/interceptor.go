@@ -44,7 +44,7 @@ type InmemoryCachingInterceptor struct {
 // no such response is found, the call is allowed to continue as usual,
 // via a client call (which should be intercepted also).
 func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *log.Logger, expiration int, blacklistedExpressions string) grpc.UnaryServerInterceptor {
-	csvLog.Printf("timestamp,source,info,method(hash)\n")
+	csvLog.Printf("timestamp,source,info,size,method(hash)\n")
 
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		// reqMessage := req.(proto.Message)
@@ -71,17 +71,22 @@ func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *lo
 		/* ------------------------- NEW CODE ------------------------- */
 
 		reqMessage := req.(proto.Message)
+		requestSize := proto.Size(reqMessage)
 		requestHash := hashcode.String(reqMessage.String())
 		hash := hashcode.Strings([]string{info.FullMethod, reqMessage.String()})
 		var resp interface{}
 		cacheStatus := "response not cached"
 
+		// If request is found in cache, answer with cached data and check whether data was fresh or stale.
 		if value, found := interceptor.Cache.Get(hash); found {
 			retResp, err := handler(ctx, req)
 			if err != nil {
 				log.Printf("Failed to call upstream %s(%d): %v", info.FullMethod, requestHash, err)
 				return nil, err
 			}
+
+			responseSize := proto.Size(retResp.(proto.Message))
+			totalSize := requestSize + responseSize
 
 			retstr := fmt.Sprintf("%v", retResp)
 			valstr := fmt.Sprintf("%v", value)
@@ -94,25 +99,28 @@ func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *lo
 				log.Printf("Stale data in cache")
 			}
 			log.Printf("Using cached response for call to %s(%d)", info.FullMethod, requestHash)
-			csvLog.Printf("%d,cache,%s,%s(%d)\n", time.Now().UnixNano(), match, info.FullMethod, requestHash)
+			csvLog.Printf("%d,cache,%s,%d,%s(%d)\n", time.Now().UnixNano(), match, totalSize, info.FullMethod, requestHash)
 			resp = value
-		} else {
 
+		// If request is not found in cache, cache it if it's not blacklisted.
+		} else {
 			retResp, err := handler(ctx, req)
 			if err != nil {
 				log.Printf("Failed to call upstream %s(%d): %v", info.FullMethod, requestHash, err)
 				return nil, err
 			}
+
+			responseSize := proto.Size(retResp.(proto.Message))
+			totalSize := requestSize + responseSize
 			
 			if blacklisted(blacklistedExpressions, info.FullMethod) {
 				log.Printf("%s method is blacklisted", info.FullMethod)
-				csvLog.Printf("%d,downstream,blacklisted,%s(%d)\n", time.Now().UnixNano(), info.FullMethod, requestHash)
+				csvLog.Printf("%d,downstream,blacklisted,%d,%s(%d)\n", time.Now().UnixNano(), totalSize, info.FullMethod, requestHash)
 			} else {
 				interceptor.Cache.Set(hash, retResp, time.Duration(expiration)*time.Millisecond)
 				cacheStatus = fmt.Sprintf("response stored for %d ms", expiration)
-				csvLog.Printf("%d,downstream,,%s(%d)\n", time.Now().UnixNano(), info.FullMethod, requestHash)
+				csvLog.Printf("%d,downstream,,%d,%s(%d)\n", time.Now().UnixNano(), totalSize, info.FullMethod, requestHash)
 			}
-			// csvLog.Printf("%d,downstream,,%s(%d)\n", time.Now().UnixNano(), info.FullMethod, requestHash)
 			resp = retResp
 		}
 
