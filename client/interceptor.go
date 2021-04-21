@@ -77,6 +77,11 @@ func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *lo
 		var resp interface{}
 		cacheStatus := "response not cached"
 
+		shouldCache := false
+		if expiration > 0 {
+			shouldCache = true
+		}
+
 		// If request is found in cache, answer with cached data and check whether data was fresh or stale.
 		if value, found := interceptor.Cache.Get(hash); found {
 			retResp, err := handler(ctx, req)
@@ -117,8 +122,10 @@ func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *lo
 				log.Printf("%s method is blacklisted", info.FullMethod)
 				csvLog.Printf("%d,downstream,blacklisted,%d,%s(%d)\n", time.Now().UnixNano(), totalSize, info.FullMethod, requestHash)
 			} else {
-				interceptor.Cache.Set(hash, retResp, time.Duration(expiration)*time.Millisecond)
-				cacheStatus = fmt.Sprintf("response stored for %d ms", expiration)
+				if shouldCache {
+					interceptor.Cache.Set(hash, retResp, time.Duration(expiration)*time.Millisecond)
+					cacheStatus = fmt.Sprintf("response stored for %d ms", expiration)
+				}
 				csvLog.Printf("%d,downstream,,%d,%s(%d)\n", time.Now().UnixNano(), totalSize, info.FullMethod, requestHash)
 			}
 			resp = retResp
