@@ -184,7 +184,7 @@ func (interceptor *InmemoryCachingInterceptor) UnaryClientInterceptor() grpc.Una
 func (interceptor *InmemoryCachingInterceptor) MemoryUsageStatus(csvLog *log.Logger) {
 	csvLog.Printf("timestamp,items,bytes")
 	for {
-		time.Sleep(15 * time.Second)
+		time.Sleep(2 * time.Second)
 		interceptor.Cache.DeleteExpired()
 		items := interceptor.Cache.ItemCount()
 		log.Printf("Items in cache: %d", items)
