@@ -1,5 +1,9 @@
 # gRPC caching interceptors
 
+Based on [gRPC caching interceptors](https://github.com/llarsson/grpc-caching-interceptors) by Lars Larsson. The `client/` directory is modified while the `server/` directory is not used.
+
+**Original README is found below.**
+
 Interceptors used to make gRPC caching-aware. Used in "Towards soft circuit breaking in service meshes via application-agnostic caching".
 
 The `client/` directory contains the interceptor you want to use to get a simple TTL-abiding Cache component. See the [Value Service Caching Component](https://github.com/llarsson/value-service-caching) repo for how to use the code. You may want to use the reverse proxy that [our modified Protobuf compiler](https://github.com/llarsson/protobuf) gives you, but should not have to.
