@@ -8,17 +8,12 @@ import (
 	"fmt"
 	"log"
 	"regexp"
-	// "strconv"
-	// "strings"
 	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/hashicorp/terraform/helper/hashcode"
 	"github.com/patrickmn/go-cache"
 	"google.golang.org/grpc"
-	// "google.golang.org/grpc/codes"
-	// "google.golang.org/grpc/metadata"
-	// "google.golang.org/grpc/status"
 )
 
 // A CachingInterceptor intercepts incoming calls to a reverse proxy's server
@@ -47,29 +42,6 @@ func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *lo
 	csvLog.Printf("timestamp,source,info,size,method(hash)\n")
 
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		// reqMessage := req.(proto.Message)
-		// requestHash := hashcode.String(reqMessage.String())
-		// hash := hashcode.Strings([]string{info.FullMethod, reqMessage.String()})
-
-		// if value, found := interceptor.Cache.Get(hash); found {
-		// 	grpc.SendHeader(ctx, metadata.Pairs("x-cache", "hit"))
-		// 	log.Printf("Using cached response for call to %s(%d)", info.FullMethod, requestHash)
-		// 	csvLog.Printf("%d,cache,%s\n", time.Now().UnixNano(), info.FullMethod)
-		// 	return value, nil
-		// }
-
-		// resp, err := handler(ctx, req)
-		// if err != nil {
-		// 	log.Printf("Failed to call upstream %s(%d): %v", info.FullMethod, requestHash, err)
-		// 	return nil, err
-		// }
-
-		// csvLog.Printf("%d,downstream,%s(%d)\n", time.Now().UnixNano(), info.FullMethod, requestHash)
-
-
-
-		/* ------------------------- NEW CODE ------------------------- */
-
 		reqMessage := req.(proto.Message)
 		requestSize := proto.Size(reqMessage)
 		requestHash := hashcode.String(reqMessage.String())
@@ -133,8 +105,6 @@ func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *lo
 
 		log.Printf("Fetched downstream response for call to %s(%d) (%s)", info.FullMethod, requestHash, cacheStatus)
 
-		/* ------------------------------------------------------------ */
-
 		return resp, nil
 	}
 }
@@ -145,48 +115,8 @@ func (interceptor *InmemoryCachingInterceptor) UnaryServerInterceptor(csvLog *lo
 // Subsequent matching operation invocations via the reverse proxy that uses
 // these Interceptors will therefore be served from cache.
 func (interceptor *InmemoryCachingInterceptor) UnaryClientInterceptor() grpc.UnaryClientInterceptor {
-// 	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-// 		reqMessage := req.(proto.Message)
-// 		requestHash := hashcode.String(reqMessage.String())
-// 		hash := hashcode.Strings([]string{method, reqMessage.String()})
-
-// 		var header metadata.MD
-// 		opts = append(opts, grpc.Header(&header))
-// 		err := invoker(ctx, method, req, reply, cc, opts...)
-// 		if err != nil {
-// 			log.Printf("Error calling upstream: %v", err)
-// 			return err
-// 		}
-
-// 		cacheStatus := "response not stored"
-
-// 		expiration, _ := cacheExpiration(header.Get("cache-control"))
-// 		if expiration > 0 {
-// 			interceptor.Cache.Set(hash, reply, time.Duration(expiration)*time.Second)
-// 			cacheStatus = fmt.Sprintf("response stored %d seconds", expiration)
-// 		}
-
-// 		grpc.SendHeader(ctx, metadata.Pairs("x-cache", "miss"))
-// 		log.Printf("Fetched upstream response for call to %s(%d) (%s)", method, requestHash, cacheStatus)
-// 		return nil
-// 	}
 	return nil
 }
-
-// func cacheExpiration(cacheHeaders []string) (int, error) {
-// 	for _, header := range cacheHeaders {
-// 		for _, value := range strings.Split(header, ",") {
-// 			value = strings.Trim(value, " ")
-// 			if strings.HasPrefix(value, "max-age") {
-// 				duration := strings.Split(value, "max-age=")[1]
-// 				return strconv.Atoi(duration)
-// 			}
-// 		}
-// 	}
-// 	return -1, status.Errorf(codes.Internal, "No cache expiration set for the given object")
-// }
-
-/* ------------------------- NEW CODE ------------------------- */
 
 func (interceptor *InmemoryCachingInterceptor) MemoryUsageStatus(csvLog *log.Logger) {
 	csvLog.Printf("timestamp,items,bytes")
@@ -215,5 +145,3 @@ func blacklisted(blacklistedExpressions, method string) bool {
 	}
 	return false
 }
-
-/* ------------------------------------------------------------ */
